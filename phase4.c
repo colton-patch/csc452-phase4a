@@ -14,14 +14,33 @@
 #include <stdlib.h>
 
 //
+// STRUCTURES
+//
+struct pcb {
+    int pid;
+    int sleepEnd; // what time the process should stop sleeping. Used for queueing
+    struct pcb *sleepQueueNext;
+};
+
+//
 // PROTOTYPES
 //
 void sleepHandler(USLOSS_Sysargs *args);
 void termReadHandler(USLOSS_Sysargs *args);
 void termWriteHandler(USLOSS_Sysargs *args);
+int clockDaemon(void *arg);
 static int checkForKernelMode(void);
 static void blockOnMbox(int mboxNum);
 static void unblockOnMbox(int mboxNum);
+static void sleepEnqueue(int pid);
+static void sleepDequeue();
+
+//
+// GLOBAL VARIABLES
+//
+static int sleepingProcs = 0; // processes currently sleeping
+static struct pcb *sleepQueueHd;
+static struct pcb pcbTable[MAXPROC]; // shadow table of PCBs
 
 //
 // NON-STATIC FUNCTIONS
@@ -53,7 +72,28 @@ void phase4_init(void) {
 *       args->arg4 : -1 if illegal number of seconds, else 0
 */
 void sleepHandler(USLOSS_Sysargs *args) {
+    int arg1 = (int)(long)args->arg1;
+    // check that a negative number of seconds was not passed
+    if (arg1 < 0) {
+        args->arg4 = (void*)(long)-1;
+        return;
+    }
 
+    // calculate what time the process should stop sleeping
+    int sleepEnd = currentTime() + (arg1 * 1000000);
+
+    // get current process and fill its sleepEnd field
+    int curPid = getpid();
+    struct pcb *curProc = &pcbTable[curPid % MAXPROC];
+    curProc->pid = curPid;
+    curProc->sleepEnd = sleepEnd;
+
+    // add to sleep queue and block
+    sleepEnqueue(curPid);
+    blockMe();
+
+    args->arg4 = (void*)(long)0;
+    return;
 }
 
 /*
@@ -87,7 +127,25 @@ void termWriteHandler(USLOSS_Sysargs *args) {
 
 }
 
-void phase4_start_service_processes(void) {}
+int clockDaemon(void *arg) {
+    (void)arg;
+    int zero = 0;
+    int *status = &zero;
+
+    while (1) {
+        waitDevice(USLOSS_CLOCK_DEV, 0, status);
+        if (sleepQueueHd != NULL && currentTime() >= sleepQueueHd->sleepEnd) {
+            sleepDequeue();
+        } 
+    }
+
+    return 0; // to avoid warnings. loop will never terminate
+}
+
+void phase4_start_service_processes(void) {
+    // spork clock daemon process
+    spork("clockDaemon", clockDaemon, NULL, USLOSS_MIN_STACK, 1);
+}
 
 //
 // STATIC FUNCTIONS
@@ -119,4 +177,42 @@ static void blockOnMbox(int mboxNum) {
 static void unblockOnMbox(int mboxNum) {
     char msg[] = "";
     MboxSend(mboxNum, msg, 0);
+}
+
+/*
+* static void sleepEnqueue(int pid) - Places the process with the given pid
+*   in the sleep queue, which is ordered by sleep end time.
+*   pid - PID of the process to place in the queue
+*/
+static void sleepEnqueue(int pid) {
+    struct pcb *proc = &pcbTable[pid % MAXPROC];
+    int endTime = proc->sleepEnd;
+    // make proc the head if queue is empty
+    if (sleepQueueHd == NULL) {
+        sleepQueueHd = proc;
+    }
+    else {
+        // find where proc belongs in the queue ordered by sleep end time
+        struct pcb *next = sleepQueueHd;
+        struct pcb *prev = NULL;
+        while (next != NULL && endTime > next->sleepEnd) {
+            prev = next;
+            next = next->sleepQueueNext;
+        }
+        
+        // place proc in its spot
+        proc->sleepQueueNext = next;
+        if (prev != NULL) {
+            prev->sleepQueueNext = proc;
+        }
+    }
+}
+
+/*
+* static void sleepDequeue() - removes the process from the head of the
+*   sleep queue and unblocks it
+*/
+static void sleepDequeue() {
+    unblockProc(sleepQueueHd->pid);
+    sleepQueueHd = sleepQueueHd->sleepQueueNext;
 }
