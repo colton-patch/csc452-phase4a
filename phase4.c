@@ -116,6 +116,7 @@ void termReadHandler(USLOSS_Sysargs *args) {
     // check for legal input
     if (unit < 0 || unit > 3) {
         args->arg4 = (void*)(long)-1;
+        return;
     } else {
         args->arg4 = (void*)(long)0;
     }
@@ -177,6 +178,12 @@ void termWriteHandler(USLOSS_Sysargs *args) {
     return;
 }
 
+/*
+* int clockDaemon(void *arg) - constantly calls waitDevice on the clock, and
+*   checks if the queued up sleeping processes are ready to wake up.
+*   arg - unused. Only to avoid warnings so it can be passed as a process'
+*   start function.
+*/
 int clockDaemon(void *arg) {
     (void)arg;
     int zero = 0;
