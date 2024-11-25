@@ -109,7 +109,32 @@ void sleepHandler(USLOSS_Sysargs *args) {
 *       args->arg4 : -1 if illegal input, else 0
 */
 void termReadHandler(USLOSS_Sysargs *args) {
+    char *buf = (char *)args->arg1;
+    int len = (int)(long)args->arg2;
+    int unit = (int)(long)args->arg3;
 
+    // check for legal input
+    if (unit < 0 || unit > 3) {
+        args->arg4 = (void*)(long)-1;
+    } else {
+        args->arg4 = (void*)(long)0;
+    }
+
+    int i = 0;
+    while (i < len) {
+        // read a character and put into buffer
+//        int status; 
+//        USLOSS_DeviceInput(USLOSS_TERM_DEV,unit,&status);
+//        c = ...get character from terminal status register...
+//        buf[i] = c;
+        i++;
+
+        // check for the end of line
+//        if (c == '\n' || i == MAXLINE) break;
+    }
+    
+    args->arg2 = i;
+    return;
 }
 
 /*
@@ -124,7 +149,32 @@ void termReadHandler(USLOSS_Sysargs *args) {
 *       args->arg4 : -1 if illegal input, else 0
 */
 void termWriteHandler(USLOSS_Sysargs *args) {
+    char *buf = (char *)args->arg1;
+    int len = (int)(long)args->arg2;
+    int unit = (int)(long)args->arg3;
 
+    // check for legal input
+    if (unit < 0 || unit > 3) {
+        args->arg4 = (void*)(long)-1;
+    } else {
+        args->arg4 = (void*)(long)0;
+    }
+
+    int i = 0;
+    while (i < len) {
+        // write a character from buffer to terminal
+//        char c = buf[i];
+//        control = ...build a terminal control register...
+//        USLOSS_DeviceOutput(USLOSS_TERM_DEV,unit,control);
+
+        // check for the null terminator
+//        if (c == '\0') break;
+
+        i++;
+    }
+   
+    args->arg2 = i;
+    return;
 }
 
 int clockDaemon(void *arg) {
@@ -212,7 +262,8 @@ static void sleepEnqueue(int pid) {
 * static void sleepDequeue() - removes the process from the head of the
 *   sleep queue and unblocks it
 */
-static void sleepDequeue() {
+static void sleepDequeue() { 
     unblockProc(sleepQueueHd->pid);
     sleepQueueHd = sleepQueueHd->sleepQueueNext;
 }
+
