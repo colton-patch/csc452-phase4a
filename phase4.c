@@ -202,6 +202,8 @@ int clockDaemon(void *arg) {
 void phase4_start_service_processes(void) {
     // spork clock daemon process
     spork("clockDaemon", clockDaemon, NULL, USLOSS_MIN_STACK, 1);
+
+    // spork terminal daemon process for each terminal unit
     for (int i = 0; i < 4; i++) {
         char name[16];
         sprintf(name, "terminalDaemon%d", i);
