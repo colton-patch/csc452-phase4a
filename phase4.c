@@ -40,8 +40,8 @@ void termReadHandler(USLOSS_Sysargs *args);
 void termWriteHandler(USLOSS_Sysargs *args);
 int clockDaemon(void *arg);
 static int checkForKernelMode(void);
-static void blockOnMbox(int mboxNum);
-static void unblockOnMbox(int mboxNum);
+static void grabLock(int mboxNum);
+static void releaseLock(int mboxNum);
 static void sleepEnqueue(int pid);
 static void sleepDequeue();
 static void termEnqueue(int read, int unit, int pid);
@@ -55,6 +55,8 @@ static struct pcb *sleepQueueHd; // sleep queue head
 static struct pcb *termReadQueueHds[4]; // terminals 0-3 read queue heads
 static struct pcb *termWriteQueueHds[4]; // terminals 0-3 write queue heads
 static struct pcb pcbTable[MAXPROC]; // shadow table of PCBs
+int termWriteLocks[4]; // array of mbox IDs for the write locks for terminals 0-3
+int termReadLocks[4]; // array of mbox IDs for the read locks for terminals 0-3
 
 //
 // NON-STATIC FUNCTIONS
@@ -75,6 +77,23 @@ void phase4_init(void) {
     systemCallVec[SYS_SLEEP] = sleepHandler;
     systemCallVec[SYS_TERMREAD] = termReadHandler;
     systemCallVec[SYS_TERMWRITE] = termWriteHandler;
+
+    // enable interrupts for terminals
+    for (int i=0; i<4; i++) {
+        int crVal = 0x0;
+        crVal |= 0x2;
+        crVal |= 0x4;
+        USLOSS_DeviceOutput(USLOSS_TERM_DEV, i, (void*)(long)crVal);
+    }
+    
+    // make locks
+    for (int i=0; i<4; i++) {
+        termWriteLocks[i] = MboxCreate(1, 0);
+        termReadLocks[i] = MboxCreate(1, 0);
+        releaseLock(termWriteLocks[i]);
+        releaseLock(termReadLocks[i]);
+    }
+
 }
 
 /*
@@ -205,21 +224,43 @@ int terminalDaemon(void *arg) {
     int unit = (int)(long)arg;
     int zero = 0;
     int status = &zero;
+    int writing = 0;
+    int writeIdx = 0;
 
     while (1) {
         waitDevice(USLOSS_TERM_DEV, unit, status);
         // if ready for writing
         if (USLOSS_TERM_STAT_XMIT(status) == USLOSS_DEV_READY && termWriteQueueHds[unit] != NULL) {
-            // write a character from buffer to terminal
-            control = ...build a terminal control register...
-            USLOSS_DeviceOutput(USLOSS_TERM_DEV,unit,control);
+            struct pcb *writingProc = termWriteQueueHds[unit];
+            
+            // if just starting to write, grab a lock so that nothing else can write
+            if (!writing) {
+                grabLock(termWriteLocks[unit]);
+                writing = 1;
+            }
+            
+            // if end of buffer is reached, release lock and unblock proc
+            if (writingProc->writeBuf[writeIdx] == '\0') {
+                if (writing) {
+                    releaseLock(termWriteLocks[unit]);
+                    writing = 0;
+                }
 
-        // check for the null terminator
-//        if (c == '\0') break;
+                termDequeue(0, unit);
+            } else {
+                // write character to device
+                int crVal = 0x1; // this turns on the ’send char’ bit (USLOSS spec page 9)
+                crVal |= 0x2; // recv int enable
+                crVal |= 0x4; // xmit int enable
+                crVal |= (buf[writeIdx] << 8); // the character to send
+                USLOSS_DeviceOutput(USLOSS_TERM_DEV, unit, (void*)(long)crVal);
+
+                writeIdx++;
+            }
         }
 
         if (USLOSS_TERM_STAT_RECV(status) == USLOSS_DEV_READY) {
-
+            
         }
     }
 
@@ -251,21 +292,21 @@ static int checkForKernelMode(void) {
 }
 
 /*
-* static void blockOnMbox(int mboxNum) - calls MboxRecv on the given mailbox,
+* static void grabLock(int mboxNum) - calls MboxRecv on the given mailbox,
 *   causing the process to block until a message is sent to that mailbox
 *   mboxNum - ID number of mailbox to block on
 */
-static void blockOnMbox(int mboxNum) {
+static void grabLock(int mboxNum) {
     char msg[] = "";
     MboxRecv(mboxNum, msg, 0);
 }
 
 /*
-* static void unblockOnMbox(int mboxNum) - calls MboxSend on the given mailbox,
+* static void releaseLock(int mboxNum) - calls MboxSend on the given mailbox,
 *   unblocking a process that may be blocked on a receive call to it
 *   mboxNum - ID number of mailbox to unblock on
 */
-static void unblockOnMbox(int mboxNum) {
+static void releaseLock(int mboxNum) {
     char msg[] = "";
     MboxSend(mboxNum, msg, 0);
 }
