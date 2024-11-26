@@ -223,7 +223,7 @@ int clockDaemon(void *arg) {
 int terminalDaemon(void *arg) {
     int unit = (int)(long)arg;
     int zero = 0;
-    int status = &zero;
+    int *status = &zero;
     int writing = 0;
     int writeIdx = 0;
 
@@ -245,7 +245,8 @@ int terminalDaemon(void *arg) {
                     releaseLock(termWriteLocks[unit]);
                     writing = 0;
                 }
-
+                
+                writingIdx = 0;
                 termDequeue(0, unit);
             } else {
                 // write character to device
@@ -259,8 +260,9 @@ int terminalDaemon(void *arg) {
             }
         }
 
-        if (USLOSS_TERM_STAT_RECV(status) == USLOSS_DEV_READY) {
-            
+        // if ready for reading
+        if (USLOSS_TERM_STAT_RECV(status) == USLOSS_DEV_READY && termReadQueueHds[unit] != NULL) {
+
         }
     }
 
