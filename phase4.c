@@ -246,7 +246,7 @@ int terminalDaemon(void *arg) {
                     writing = 0;
                 }
                 
-                writingIdx = 0;
+                writeIdx = 0;
                 termDequeue(0, unit);
             } else {
                 // write character to device
