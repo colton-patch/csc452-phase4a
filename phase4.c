@@ -19,6 +19,8 @@
 struct pcb {
     int pid;
     int sleepEnd; // what time the process should stop sleeping. Used for queueing
+    char writeBuf[MAXLINE]; // message to write to a terminal
+    char readBuf[MAXLINE]; // buffer for message read from terminal 
     struct pcb *sleepQueueNext;
     struct pcb termReadQueueNexts[4]; // terminals 0-3 read queue pointers
     struct pcb termWriteQueueNexts[4]; // terminals 0-3 write queue pointers
@@ -26,9 +28,8 @@ struct pcb {
 };
 
 struct terminalControl {
-    char *readBuffer;
+    char readBuffer[MAXLINE];
     int bufferIdx;
-
 }
 
 //
@@ -43,6 +44,8 @@ static void blockOnMbox(int mboxNum);
 static void unblockOnMbox(int mboxNum);
 static void sleepEnqueue(int pid);
 static void sleepDequeue();
+static void termEnqueue(int read, int unit, int pid);
+static void termDequeue(int read, int unit);
 
 //
 // GLOBAL VARIABLES
@@ -172,18 +175,6 @@ void termWriteHandler(USLOSS_Sysargs *args) {
         args->arg4 = (void*)(long)0;
     }
 
-    int i = 0;
-    while (i < len) {
-        // write a character from buffer to terminal
-//        char c = buf[i];
-//        control = ...build a terminal control register...
-//        USLOSS_DeviceOutput(USLOSS_TERM_DEV,unit,control);
-
-        // check for the null terminator
-//        if (c == '\0') break;
-
-        i++;
-    }
    
     args->arg2 = i;
     return;
@@ -217,8 +208,14 @@ int terminalDaemon(void *arg) {
 
     while (1) {
         waitDevice(USLOSS_TERM_DEV, unit, status);
-        if (USLOSS_TERM_STAT_XMIT(status) == USLOSS_DEV_READY) {
+        // if ready for writing
+        if (USLOSS_TERM_STAT_XMIT(status) == USLOSS_DEV_READY && termWriteQueueHds[unit] != NULL) {
+            // write a character from buffer to terminal
+            control = ...build a terminal control register...
+            USLOSS_DeviceOutput(USLOSS_TERM_DEV,unit,control);
 
+        // check for the null terminator
+//        if (c == '\0') break;
         }
 
         if (USLOSS_TERM_STAT_RECV(status) == USLOSS_DEV_READY) {
@@ -357,12 +354,12 @@ static void termEnqueue(int read, int unit, int pid) {
 }
 
 /*
-* static void sleepDequeue(int read, int unit) - removes the process
+* static void termDequeue(int read, int unit) - removes the process
 *   from the head of a terminal queue and unblocks it.
 *   read : 1 if removing from a read queue, 0 if removing from a write queue.
 *   unit : the unit (0-3) of the terminal whose queue to remove from.
 */
-static void sleepDequeue(int read, int unit) {
+static void termDequeue(int read, int unit) {
     struct pcb **queueHd;
     if (read) {
         queueHd = &termReadQueueHds[unit];
@@ -371,6 +368,7 @@ static void sleepDequeue(int read, int unit) {
     }
 
     unblockProc(*queueHd->pid);
+
     if (read) {
         *queueHd = *queueHd->termReadQueueNexts[unit];
     } else {
