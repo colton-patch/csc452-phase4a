@@ -22,6 +22,12 @@ struct pcb {
     struct pcb *sleepQueueNext;
 };
 
+struct terminalControl {
+    char *readBuffer;
+    int bufferIdx;
+
+}
+
 //
 // PROTOTYPES
 //
@@ -39,7 +45,8 @@ static void sleepDequeue();
 // GLOBAL VARIABLES
 //
 static int sleepingProcs = 0; // processes currently sleeping
-static struct pcb *sleepQueueHd;
+static struct pcb *sleepQueueHd; // sleep queue head
+
 static struct pcb pcbTable[MAXPROC]; // shadow table of PCBs
 
 //
@@ -194,6 +201,19 @@ int clockDaemon(void *arg) {
         if (sleepQueueHd != NULL && currentTime() >= sleepQueueHd->sleepEnd) {
             sleepDequeue();
         } 
+    }
+
+    return 0; // to avoid warnings. loop will never terminate
+}
+
+int terminalDaemon(void *arg) {
+    int unit = (int)(long)arg;
+    int zero = 0;
+    int status = &zero;
+
+    while (1) {
+        waitDevice(USLOSS_TERM_DEV, unit, status);
+
     }
 
     return 0; // to avoid warnings. loop will never terminate
