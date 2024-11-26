@@ -20,6 +20,9 @@ struct pcb {
     int pid;
     int sleepEnd; // what time the process should stop sleeping. Used for queueing
     struct pcb *sleepQueueNext;
+    struct pcb termReadQueueNexts[4]; // terminals 0-3 read queue pointers
+    struct pcb termWriteQueueNexts[4]; // terminals 0-3 write queue pointers
+
 };
 
 struct terminalControl {
@@ -46,7 +49,8 @@ static void sleepDequeue();
 //
 static int sleepingProcs = 0; // processes currently sleeping
 static struct pcb *sleepQueueHd; // sleep queue head
-
+static struct pcb *termReadQueueHds[4]; // terminals 0-3 read queue heads
+static struct pcb *termWriteQueueHds[4]; // terminals 0-3 write queue heads
 static struct pcb pcbTable[MAXPROC]; // shadow table of PCBs
 
 //
@@ -213,7 +217,13 @@ int terminalDaemon(void *arg) {
 
     while (1) {
         waitDevice(USLOSS_TERM_DEV, unit, status);
+        if (USLOSS_TERM_STAT_XMIT(status) == USLOSS_DEV_READY) {
 
+        }
+
+        if (USLOSS_TERM_STAT_RECV(status) == USLOSS_DEV_READY) {
+
+        }
     }
 
     return 0; // to avoid warnings. loop will never terminate
@@ -227,7 +237,7 @@ void phase4_start_service_processes(void) {
     for (int i = 0; i < 4; i++) {
         char name[16];
         sprintf(name, "terminalDaemon%d", i);
-        spork("terminalDaemon", terminalDaemon, (void *)(long)i, USLOSS_MIN_STACK, 1)
+        spork(name, terminalDaemon, (void *)(long)i, USLOSS_MIN_STACK, 1)
     }
 }
 
@@ -300,4 +310,72 @@ static void sleepDequeue() {
     unblockProc(sleepQueueHd->pid);
     sleepQueueHd = sleepQueueHd->sleepQueueNext;
 }
+
+/*
+* static void termEnqueue(int read, int unit, int pid) - places
+*   the process with the given pid in one of ther terminal queues.
+*   read : 1 if placing in a read queue, 0 if placing in a write queue.
+*   unit : the unit (0-3) of the terminal whose queue to add to.
+*   pid : PID of the process to be enqueued
+*/
+static void termEnqueue(int read, int unit, int pid) {
+    // get the desired queue head
+    struct pcb **queueHd;
+    if (read) {
+        queueHd = &termReadQueueHds[unit];
+    } else {
+        queueHd = &termWriteQueueHds[unit];
+    }
+
+    struct pcb *proc = pcbTable[pid % MAXPROC];
+
+    // place proc as the head if the head is empty
+    if (*queueHd == NULL) {
+        *queueHd = proc;
+    } else {
+        // traverse queue
+        struct pcb *next = *queueHd;
+        struct pcb *prev = NULL;
+        while (next != NULL) {
+            prev = next;
+            if (read) {
+                next = next->termReadQueueNexts[unit];
+            } else {
+                next = next->termWriteQueueNexts[unit];
+            }
+        }
+        
+        // place proc in its spot
+        if (read) {
+            prev->termReadQueueNexts[unit] = proc;
+            proc->termReadQueueNexts[unit] = NULL;
+        } else {
+            prev->termWriteQueueNexts[unit] = proc;
+            proc->termWriteQueueNexts[unit] = NULL;
+        }
+    }
+}
+
+/*
+* static void sleepDequeue(int read, int unit) - removes the process
+*   from the head of a terminal queue and unblocks it.
+*   read : 1 if removing from a read queue, 0 if removing from a write queue.
+*   unit : the unit (0-3) of the terminal whose queue to remove from.
+*/
+static void sleepDequeue(int read, int unit) {
+    struct pcb **queueHd;
+    if (read) {
+        queueHd = &termReadQueueHds[unit];
+    } else {
+        queueHd = &termWriteQueueHds[unit];
+    }
+
+    unblockProc(*queueHd->pid);
+    if (read) {
+        *queueHd = *queueHd->termReadQueueNexts[unit];
+    } else {
+        *queueHd = *queueHd->termWriteQueueNexts[unit];
+    }
+}
+
 
