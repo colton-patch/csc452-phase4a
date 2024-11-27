@@ -23,8 +23,8 @@ struct pcb {
     char readBuf[MAXLINE]; // buffer for message read from terminal 
     int readLen;
     struct pcb *sleepQueueNext;
-    struct pcb termReadQueueNexts[4]; // terminals 0-3 read queue pointers
-    struct pcb termWriteQueueNexts[4]; // terminals 0-3 write queue pointers
+    struct pcb *termReadQueueNexts[4]; // terminals 0-3 read queue pointers
+    struct pcb *termWriteQueueNexts[4]; // terminals 0-3 write queue pointers
 
 };
 
@@ -32,7 +32,7 @@ struct terminalControl {
     char readBuffers[10][MAXLINE + 1];
     int numFilledBufs;
     int nextFilledBuf;
-}
+};
 
 //
 // PROTOTYPES
@@ -174,7 +174,7 @@ void termReadHandler(USLOSS_Sysargs *args) {
 
     // fill buf with characters from readBuf field
     char *readBuf[len];
-    memcpy(args->arg1, curProc->readBuf, len)
+    memcpy(args->arg1, curProc->readBuf, len);
 
     args->arg2 = (void*)(long)len;
     return;
