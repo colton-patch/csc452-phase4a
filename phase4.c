@@ -212,7 +212,6 @@ void termWriteHandler(USLOSS_Sysargs *args) {
     int len = (int)(long)args->arg2;
     int unit = (int)(long)args->arg3;
 
-    USLOSS_Console("...Handling write...\n");
     // check for legal input
     if (unit < 0 || unit > 3) {
         args->arg4 = (void*)(long)-1;
@@ -227,7 +226,6 @@ void termWriteHandler(USLOSS_Sysargs *args) {
     curProc->pid = curPid;
 
     char *writeBuf = curProc->writeBuf;
-    USLOSS_Console("...buf is %s...\n", buf);
     // fill its writeBuf field
     if (len < MAXLINE) {
         strncpy(writeBuf, buf, len);
@@ -238,7 +236,6 @@ void termWriteHandler(USLOSS_Sysargs *args) {
         *(writeBuf + MAXLINE) = '\0';
         args->arg2 = (void*)(long)MAXLINE;
     }
-    USLOSS_Console("...writeBuf is %s...\n", writeBuf);
 
     // add to termWrite queue and block
     termEnqueue(0, unit, curPid);
@@ -309,7 +306,6 @@ int terminalDaemon(void *arg) {
         // if ready for writing
         if (USLOSS_TERM_STAT_XMIT(*status) == USLOSS_DEV_READY && termWriteQueueHds[unit] != NULL) {
             struct pcb *writingProc = termWriteQueueHds[unit];
-            
             // if just starting to write, grab a lock so that nothing else can write
             if (!writing) {
                 grabLock(termWriteLocks[unit]);
@@ -334,11 +330,13 @@ int terminalDaemon(void *arg) {
                 }
 
                 writeIdx++;
-            }
+            } 
         }
 
+        
         // if ready for reading
-        if (USLOSS_TERM_STAT_RECV(*status) == USLOSS_DEV_BUSY) {
+        if (USLOSS_TERM_STAT_RECV(*status) == USLOSS_DEV_BUSY) { 
+
             struct pcb *readingProc = termReadQueueHds[unit];
             int bufIdx = termCtrls[unit].nextFilledBuf;
             
@@ -355,7 +353,7 @@ int terminalDaemon(void *arg) {
             
             // read character
             char nextChar = USLOSS_TERM_STAT_CHAR(*status);
-
+//            if (unit == 0) USLOSS_Console("...READING %c from terminal %d...\n", nextChar, unit);
             // if the end of a line is reached
             if (newLineReached || readIdx == MAXLINE) {
                 newLineReached = 0;
@@ -370,8 +368,9 @@ int terminalDaemon(void *arg) {
                     termDequeue(1, unit);
                 }
 
-                releaseLock(termWriteLocks[unit]);
+                releaseLock(termReadLocks[unit]);
                 reading = 0;
+                readIdx = 0;
             } 
             else {
                 // store the next character in one of the terminals buffers
@@ -541,6 +540,8 @@ static void termDequeue(int read, int unit) {
         termWriteQueueHds[unit] = termWriteQueueHds[unit]->termWriteQueueNexts[unit];
     }
     releaseLock(termQueueLocks[unit]);
+//    USLOSS_Console("...AFTER DEQUEUE...\n");
+//    USLOSS_Console("...Unit is %d...\n", unit);
+//    printWriteQueue(unit);
 }
-
 
