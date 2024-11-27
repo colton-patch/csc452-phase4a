@@ -164,19 +164,23 @@ void termReadHandler(USLOSS_Sysargs *args) {
         args->arg4 = (void*)(long)0;
     }
 
-    int i = 0;
-    while (i < len) {
-        // read a character and put into buffer
-//        int status; 
-//        USLOSS_DeviceInput(USLOSS_TERM_DEV,unit,&status);
-//        c = ...get character from terminal status register...
-//        buf[i] = c;
-        i++;
+    // get current process
+    int curPid = getpid();
+    struct pcb *curProc = &pcbTable[curPid % MAXPROC];
+    curProc->pid = curPid;
 
-        // check for the end of line
-//        if (c == '\n' || i == MAXLINE) break;
+    // add to termRead queue and block
+    termEnqueue(1, unit, curPid);
+    blockMe();
+
+    // fill buf with characters from readBuf field
+    int i = 0;
+    char *readBuf = curProc->readBuf;
+    if (curProc->readLen < len) {
+
+    } else {
+
     }
-    
     args->arg2 = i;
     return;
 }
@@ -204,7 +208,25 @@ void termWriteHandler(USLOSS_Sysargs *args) {
         args->arg4 = (void*)(long)0;
     }
 
-   
+    // get current process
+    int curPid = getpid();
+    struct pcb *curProc = &pcbTable[curPid % MAXPROC];
+    curProc->pid = curPid;
+
+    char *writeBuf = curProc->writeBuf;
+    // fill its writeBuf field
+    if (len < MAXLINE) {
+        strncpy(writeBuf, buf);
+        writeBuf[len] = "\0";
+    } else {
+        strncpy(writeBuf, buf, MAXLINE);
+        writeBuf[MAXLINE] = "\0";
+    }
+
+    // add to termWrite queue and block
+    termEnqueue(0, unit, curPid);
+    blockMe();   
+
     args->arg2 = i;
     return;
 }
