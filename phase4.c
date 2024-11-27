@@ -152,12 +152,11 @@ void sleepHandler(USLOSS_Sysargs *args) {
 *       args->arg4 : -1 if illegal input, else 0
 */
 void termReadHandler(USLOSS_Sysargs *args) {
-    char *buf = (char *)args->arg1;
     int len = (int)(long)args->arg2;
     int unit = (int)(long)args->arg3;
 
     // check for legal input
-    if (unit < 0 || unit > 3) {
+    if (unit < 0 || unit > 3 || len > MAXLINE) {
         args->arg4 = (void*)(long)-1;
         return;
     } else {
@@ -174,14 +173,10 @@ void termReadHandler(USLOSS_Sysargs *args) {
     blockMe();
 
     // fill buf with characters from readBuf field
-    int i = 0;
-    char *readBuf = curProc->readBuf;
-    if (curProc->readLen < len) {
+    char *readBuf[len];
+    memcpy(args->arg1, curProc->readBuf, len)
 
-    } else {
-
-    }
-    args->arg2 = i;
+    args->arg2 = (void*)(long)len;
     return;
 }
 
@@ -204,6 +199,7 @@ void termWriteHandler(USLOSS_Sysargs *args) {
     // check for legal input
     if (unit < 0 || unit > 3) {
         args->arg4 = (void*)(long)-1;
+        return;
     } else {
         args->arg4 = (void*)(long)0;
     }
@@ -216,18 +212,19 @@ void termWriteHandler(USLOSS_Sysargs *args) {
     char *writeBuf = curProc->writeBuf;
     // fill its writeBuf field
     if (len < MAXLINE) {
-        strncpy(writeBuf, buf);
+        strncpy(writeBuf, buf, len);
         writeBuf[len] = "\0";
+        args->arg2 = (void*)(long)len;
     } else {
         strncpy(writeBuf, buf, MAXLINE);
         writeBuf[MAXLINE] = "\0";
+        args->arg2 = (void*)(long)MAXLINE;
     }
 
     // add to termWrite queue and block
     termEnqueue(0, unit, curPid);
     blockMe();   
 
-    args->arg2 = i;
     return;
 }
 
@@ -252,6 +249,12 @@ int clockDaemon(void *arg) {
     return 0; // to avoid warnings. loop will never terminate
 }
 
+/*
+* int terminalDaemon(void *arg) - constantly calls waitDevice on a specific terminal.
+*   Checks if the terminal is ready to be written to and/or read from, and writes from
+*   a waiting writing process and/or reads into a waiting reading process.
+*   arg : the unit number of the terminal to read/write from.
+*/
 int terminalDaemon(void *arg) {
     int unit = (int)(long)arg;
     int zero = 0;
@@ -325,7 +328,6 @@ int terminalDaemon(void *arg) {
 
             // if the end of a line is reached
             if (nextChar == '\n' || writeIdx = MAXLINE) {
-                readIdx = 0;
                 termCtrls[unit].numFilledBufs++; 
 
                 // give the buffer to a waiting process and unblock it
