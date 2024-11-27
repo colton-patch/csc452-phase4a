@@ -21,6 +21,7 @@ struct pcb {
     int sleepEnd; // what time the process should stop sleeping. Used for queueing
     char writeBuf[MAXLINE]; // message to write to a terminal
     char readBuf[MAXLINE]; // buffer for message read from terminal 
+    int readLen;
     struct pcb *sleepQueueNext;
     struct pcb termReadQueueNexts[4]; // terminals 0-3 read queue pointers
     struct pcb termWriteQueueNexts[4]; // terminals 0-3 write queue pointers
@@ -28,8 +29,9 @@ struct pcb {
 };
 
 struct terminalControl {
-    char readBuffer[MAXLINE];
-    int bufferIdx;
+    char readBuffers[10][MAXLINE + 1];
+    int numFilledBufs;
+    int nextFilledBuf;
 }
 
 //
@@ -57,6 +59,7 @@ static struct pcb *termWriteQueueHds[4]; // terminals 0-3 write queue heads
 static struct pcb pcbTable[MAXPROC]; // shadow table of PCBs
 int termWriteLocks[4]; // array of mbox IDs for the write locks for terminals 0-3
 int termReadLocks[4]; // array of mbox IDs for the read locks for terminals 0-3
+struct terminalControl termCtrls[4]; // array of terminal controls
 
 //
 // NON-STATIC FUNCTIONS
@@ -64,7 +67,9 @@ int termReadLocks[4]; // array of mbox IDs for the read locks for terminals 0-3
 
 /*
 * void phase4_init(void) - phase 4 initialization function. Fills
-*   the system call vector with the handlers defined in phase 4
+*   the system call vector with the handlers defined in phase 4 as well
+*   as enabling interrupts, creating locks, and initializing terminal 
+*   control structures.
 */
 void phase4_init(void) {
     // make sure in kernel mode
@@ -94,6 +99,11 @@ void phase4_init(void) {
         releaseLock(termReadLocks[i]);
     }
 
+    // initialize terminal controls structures
+    for (int i=0; i<4; i++) {
+        termCtrls[i].nextFilledBuf = -1;
+        termCtrls[i].numFilledBufs = 0;
+    }
 }
 
 /*
@@ -224,11 +234,24 @@ int terminalDaemon(void *arg) {
     int unit = (int)(long)arg;
     int zero = 0;
     int *status = &zero;
-    int writing = 0;
+
+    int writing = 0; // whether or not writing is in progress
+    int reading = 0; // whether or not reading a line is in progress
     int writeIdx = 0;
+    int readIdx = 0;
 
     while (1) {
         waitDevice(USLOSS_TERM_DEV, unit, status);
+
+        // check if there is already a stored line that can be read by a process
+        if (termReadQueueHds[unit] != NULL && termCtrls[unit].numFilledBufs > 0) {
+            int bufIdx = termCtrls[unit].nextFilledBuf
+            strcpy(termReadQueueHds[unit]->readBuf, termCtrls[unit].readBuffers[bufIdx]);
+            numFilledBufs--;
+
+            termDequeue(1, unit);
+        }
+
         // if ready for writing
         if (USLOSS_TERM_STAT_XMIT(status) == USLOSS_DEV_READY && termWriteQueueHds[unit] != NULL) {
             struct pcb *writingProc = termWriteQueueHds[unit];
@@ -240,7 +263,7 @@ int terminalDaemon(void *arg) {
             }
             
             // if end of buffer is reached, release lock and unblock proc
-            if (writingProc->writeBuf[writeIdx] == '\0') {
+            if (writingProc->writeBuf[writeIdx] == '\0' || writeIdx == MAXLINE) {
                 if (writing) {
                     releaseLock(termWriteLocks[unit]);
                     writing = 0;
@@ -261,7 +284,27 @@ int terminalDaemon(void *arg) {
         }
 
         // if ready for reading
-        if (USLOSS_TERM_STAT_RECV(status) == USLOSS_DEV_READY && termReadQueueHds[unit] != NULL) {
+        if (USLOSS_TERM_STAT_RECV(status) == USLOSS_DEV_READY) {
+            struct pcb *readingProc = termReadQueueHds[unit];
+            
+            // if just starting to read, grab a lock so that nothing else can read
+            if (!reading) {
+                grabLock(termReadLocks[unit]);
+                reading = 1;
+            }
+            
+            // read character
+            char nextChar = USLOSS_TERM_STAT_CHAR(status);
+
+            if (nextChar == '\n' || writeIdx = MAXLINE) {
+                if (reading) {
+                    releaseLock(termWriteLocks[unit]);
+                    reading = 0;
+                }
+                
+                readIdx = 0;
+                
+            }
 
         }
     }
