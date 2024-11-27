@@ -247,7 +247,8 @@ int terminalDaemon(void *arg) {
         if (termReadQueueHds[unit] != NULL && termCtrls[unit].numFilledBufs > 0) {
             int bufIdx = termCtrls[unit].nextFilledBuf
             strcpy(termReadQueueHds[unit]->readBuf, termCtrls[unit].readBuffers[bufIdx]);
-            numFilledBufs--;
+            termCtrls[unit].numFilledBufs--;
+            termCtrls[unit].nextFilledBuf--;
 
             termDequeue(1, unit);
         }
@@ -264,13 +265,11 @@ int terminalDaemon(void *arg) {
             
             // if end of buffer is reached, release lock and unblock proc
             if (writingProc->writeBuf[writeIdx] == '\0' || writeIdx == MAXLINE) {
-                if (writing) {
-                    releaseLock(termWriteLocks[unit]);
-                    writing = 0;
-                }
-                
                 writeIdx = 0;
                 termDequeue(0, unit);
+                releaseLock(termWriteLocks[unit]);
+                writing = 0;
+
             } else {
                 // write character to device
                 int crVal = 0x1; // this turns on the ’send char’ bit (USLOSS spec page 9)
@@ -286,9 +285,15 @@ int terminalDaemon(void *arg) {
         // if ready for reading
         if (USLOSS_TERM_STAT_RECV(status) == USLOSS_DEV_READY) {
             struct pcb *readingProc = termReadQueueHds[unit];
+            int bufIdx = termCtrls[unit].nextFilledBuf;
             
             // if just starting to read, grab a lock so that nothing else can read
             if (!reading) {
+                // if there have already been 10 stored buffers, ignore this read
+                if (termCtrls[unit].numFilledBufs == 10) {
+                    continue;
+                }
+
                 grabLock(termReadLocks[unit]);
                 reading = 1;
             }
@@ -296,16 +301,27 @@ int terminalDaemon(void *arg) {
             // read character
             char nextChar = USLOSS_TERM_STAT_CHAR(status);
 
+            // if the end of a line is reached
             if (nextChar == '\n' || writeIdx = MAXLINE) {
-                if (reading) {
-                    releaseLock(termWriteLocks[unit]);
-                    reading = 0;
-                }
-                
                 readIdx = 0;
-                
-            }
+                termCtrls[unit].numFilledBufs++; 
 
+                // give the buffer to a waiting process and unblock it
+                if (termReadQueueHds[unit] != NULL) {
+                    strcpy(termReadQueueHds[unit]->readBuf, termCtrls[unit].readBuffers[bufIdx]);
+                    termCtrls[unit].numFilledBufs--;
+                    termCtrls[unit].nextFilledBuf = (termCtrls[unit].nextFilledBuf + 1) % 10;
+                    termDequeue(1, unit);
+                }
+
+                releaseLock(termWriteLocks[unit]);
+                reading = 0;
+            } 
+            else {
+                // store the next character in one of the terminals buffers
+                termCtrls[unit].readBuffers[bufIdx][readIdx] = nextChar;
+                readIdx++;
+            }
         }
     }
 
