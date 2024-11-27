@@ -169,7 +169,7 @@ void termReadHandler(USLOSS_Sysargs *args) {
     int unit = (int)(long)args->arg3;
 
     // check for legal input
-    if (unit < 0 || unit > 3 || len > MAXLINE) {
+    if (unit < 0 || unit > 3 || len < 1 ||len > MAXLINE) {
         args->arg4 = (void*)(long)-1;
         return;
     } else {
@@ -212,6 +212,7 @@ void termWriteHandler(USLOSS_Sysargs *args) {
     int len = (int)(long)args->arg2;
     int unit = (int)(long)args->arg3;
 
+    USLOSS_Console("...Handling write...\n");
     // check for legal input
     if (unit < 0 || unit > 3) {
         args->arg4 = (void*)(long)-1;
@@ -226,6 +227,7 @@ void termWriteHandler(USLOSS_Sysargs *args) {
     curProc->pid = curPid;
 
     char *writeBuf = curProc->writeBuf;
+    USLOSS_Console("...buf is %s...\n", buf);
     // fill its writeBuf field
     if (len < MAXLINE) {
         strncpy(writeBuf, buf, len);
@@ -236,6 +238,7 @@ void termWriteHandler(USLOSS_Sysargs *args) {
         *(writeBuf + MAXLINE) = '\0';
         args->arg2 = (void*)(long)MAXLINE;
     }
+    USLOSS_Console("...writeBuf is %s...\n", writeBuf);
 
     // add to termWrite queue and block
     termEnqueue(0, unit, curPid);
