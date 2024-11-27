@@ -113,6 +113,10 @@ void phase4_init(void) {
         termCtrls[i].nextFilledBuf = 0;
         termCtrls[i].numFilledBufs = 0;
     }
+
+    for (int i=0; i<MAXPROC; i++) {
+        pcbTable[i].pid = i;
+    }
 }
 
 /*
@@ -184,7 +188,11 @@ void termReadHandler(USLOSS_Sysargs *args) {
     // fill buf with characters from readBuf field
     memcpy(args->arg1, curProc->readBuf, len);
 
-    args->arg2 = (void*)(long)len;
+    if (len < curProc->readLen) {
+        args->arg2 = (void*)(long)len;
+    } else {
+        args->arg2 = (void*)(long)curProc->readLen;
+    }
     return;
 }
 
@@ -272,6 +280,7 @@ int terminalDaemon(void *arg) {
     int reading = 0; // whether or not reading a line is in progress
     int writeIdx = 0;
     int readIdx = 0;
+    int newLineReached = 0;
 
     while (1) {
         waitDevice(USLOSS_TERM_DEV, unit, status);
@@ -282,6 +291,14 @@ int terminalDaemon(void *arg) {
             strcpy(termReadQueueHds[unit]->readBuf, termCtrls[unit].readBuffers[bufIdx]);
             termCtrls[unit].numFilledBufs--;
             termCtrls[unit].nextFilledBuf--;
+
+            int i;
+            for (i=0; i<MAXLINE; i++) {
+                if (termReadQueueHds[unit]->readBuf[i] == '\n') {
+                    break;
+                }
+            }
+            termReadQueueHds[unit]->readLen = i + 1;
 
             termDequeue(1, unit);
         }
@@ -335,17 +352,16 @@ int terminalDaemon(void *arg) {
             
             // read character
             char nextChar = USLOSS_TERM_STAT_CHAR(*status);
-            if (unit == 1) {
-                USLOSS_Console("%c\n", USLOSS_TERM_STAT_CHAR(*status));
-            }
 
             // if the end of a line is reached
-            if (nextChar == '\n' || writeIdx == MAXLINE) {
+            if (newLineReached || readIdx == MAXLINE) {
+                newLineReached = 0;
                 termCtrls[unit].numFilledBufs++; 
 
                 // give the buffer to a waiting process and unblock it
                 if (readingProc != NULL) {
                     strcpy(readingProc->readBuf, termCtrls[unit].readBuffers[bufIdx]);
+                    readingProc->readLen = readIdx;
                     termCtrls[unit].numFilledBufs--;
                     termCtrls[unit].nextFilledBuf = (termCtrls[unit].nextFilledBuf + 1) % 10;
                     termDequeue(1, unit);
@@ -358,6 +374,9 @@ int terminalDaemon(void *arg) {
                 // store the next character in one of the terminals buffers
                 termCtrls[unit].readBuffers[bufIdx][readIdx] = nextChar;
                 readIdx++;
+                if (nextChar == '\n') {
+                    newLineReached = 1;
+                }
             }
         }
     }
@@ -426,16 +445,18 @@ static void sleepEnqueue(int pid) {
         // find where proc belongs in the queue ordered by sleep end time
         struct pcb *next = sleepQueueHd;
         struct pcb *prev = NULL;
-        while (next != NULL && endTime / 100000 > next->sleepEnd) {
+        while (next != NULL && endTime > next->sleepEnd) {
             prev = next;
             next = next->sleepQueueNext;
         }
         
         // place proc in its spot
-        proc->sleepQueueNext = next;
         if (prev != NULL) {
+            proc->sleepQueueNext = next;
             prev->sleepQueueNext = proc;
-            USLOSS_Console("Process %d's sleep end: %d\n", pid, proc->sleepEnd);
+        } else {
+            proc->sleepQueueNext = sleepQueueHd;
+            sleepQueueHd = proc;
         }
     }
     releaseLock(sleepQueueLock);
