@@ -13,7 +13,7 @@
 
 
 
-int Child(char *arg)
+int Child(void *arg)
 {
    int tod1,tod2;
    int my_num = (int)(long)arg;

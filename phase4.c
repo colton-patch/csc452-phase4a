@@ -52,7 +52,6 @@ static void termDequeue(int read, int unit);
 //
 // GLOBAL VARIABLES
 //
-static int sleepingProcs = 0; // processes currently sleeping
 static struct pcb *sleepQueueHd; // sleep queue head
 static struct pcb *termReadQueueHds[4]; // terminals 0-3 read queue heads
 static struct pcb *termWriteQueueHds[4]; // terminals 0-3 write queue heads
@@ -88,7 +87,10 @@ void phase4_init(void) {
         int crVal = 0x0;
         crVal |= 0x2;
         crVal |= 0x4;
-        USLOSS_DeviceOutput(USLOSS_TERM_DEV, i, (void*)(long)crVal);
+        if (USLOSS_DeviceOutput(USLOSS_TERM_DEV, i, (void*)(long)crVal) == USLOSS_DEV_INVALID) {
+            USLOSS_Halt(1);
+        }
+
     }
     
     // make locks
@@ -173,7 +175,6 @@ void termReadHandler(USLOSS_Sysargs *args) {
     blockMe();
 
     // fill buf with characters from readBuf field
-    char *readBuf[len];
     memcpy(args->arg1, curProc->readBuf, len);
 
     args->arg2 = (void*)(long)len;
@@ -213,11 +214,11 @@ void termWriteHandler(USLOSS_Sysargs *args) {
     // fill its writeBuf field
     if (len < MAXLINE) {
         strncpy(writeBuf, buf, len);
-        writeBuf[len] = "\0";
+        *(writeBuf + len) = '\0';
         args->arg2 = (void*)(long)len;
     } else {
         strncpy(writeBuf, buf, MAXLINE);
-        writeBuf[MAXLINE] = "\0";
+        *(writeBuf + MAXLINE) = '\0';
         args->arg2 = (void*)(long)MAXLINE;
     }
 
@@ -270,7 +271,7 @@ int terminalDaemon(void *arg) {
 
         // check if there is already a stored line that can be read by a process
         if (termReadQueueHds[unit] != NULL && termCtrls[unit].numFilledBufs > 0) {
-            int bufIdx = termCtrls[unit].nextFilledBuf
+            int bufIdx = termCtrls[unit].nextFilledBuf;
             strcpy(termReadQueueHds[unit]->readBuf, termCtrls[unit].readBuffers[bufIdx]);
             termCtrls[unit].numFilledBufs--;
             termCtrls[unit].nextFilledBuf--;
@@ -279,7 +280,7 @@ int terminalDaemon(void *arg) {
         }
 
         // if ready for writing
-        if (USLOSS_TERM_STAT_XMIT(status) == USLOSS_DEV_READY && termWriteQueueHds[unit] != NULL) {
+        if (USLOSS_TERM_STAT_XMIT(*status) == USLOSS_DEV_READY && termWriteQueueHds[unit] != NULL) {
             struct pcb *writingProc = termWriteQueueHds[unit];
             
             // if just starting to write, grab a lock so that nothing else can write
@@ -300,15 +301,17 @@ int terminalDaemon(void *arg) {
                 int crVal = 0x1; // this turns on the ’send char’ bit (USLOSS spec page 9)
                 crVal |= 0x2; // recv int enable
                 crVal |= 0x4; // xmit int enable
-                crVal |= (buf[writeIdx] << 8); // the character to send
-                USLOSS_DeviceOutput(USLOSS_TERM_DEV, unit, (void*)(long)crVal);
+                crVal |= (writingProc->writeBuf[writeIdx] << 8); // the character to send
+                if (USLOSS_DeviceOutput(USLOSS_TERM_DEV, unit, (void*)(long)crVal) == USLOSS_DEV_INVALID) {
+                    USLOSS_Halt(1);
+                }
 
                 writeIdx++;
             }
         }
 
         // if ready for reading
-        if (USLOSS_TERM_STAT_RECV(status) == USLOSS_DEV_READY) {
+        if (USLOSS_TERM_STAT_RECV(*status) == USLOSS_DEV_READY) {
             struct pcb *readingProc = termReadQueueHds[unit];
             int bufIdx = termCtrls[unit].nextFilledBuf;
             
@@ -324,15 +327,15 @@ int terminalDaemon(void *arg) {
             }
             
             // read character
-            char nextChar = USLOSS_TERM_STAT_CHAR(status);
+            char nextChar = USLOSS_TERM_STAT_CHAR(*status);
 
             // if the end of a line is reached
-            if (nextChar == '\n' || writeIdx = MAXLINE) {
+            if (nextChar == '\n' || writeIdx == MAXLINE) {
                 termCtrls[unit].numFilledBufs++; 
 
                 // give the buffer to a waiting process and unblock it
-                if (termReadQueueHds[unit] != NULL) {
-                    strcpy(termReadQueueHds[unit]->readBuf, termCtrls[unit].readBuffers[bufIdx]);
+                if (readingProc != NULL) {
+                    strcpy(readingProc->readBuf, termCtrls[unit].readBuffers[bufIdx]);
                     termCtrls[unit].numFilledBufs--;
                     termCtrls[unit].nextFilledBuf = (termCtrls[unit].nextFilledBuf + 1) % 10;
                     termDequeue(1, unit);
@@ -360,7 +363,7 @@ void phase4_start_service_processes(void) {
     for (int i = 0; i < 4; i++) {
         char name[16];
         sprintf(name, "terminalDaemon%d", i);
-        spork(name, terminalDaemon, (void *)(long)i, USLOSS_MIN_STACK, 1)
+        spork(name, terminalDaemon, (void *)(long)i, USLOSS_MIN_STACK, 1);
     }
 }
 
@@ -450,7 +453,7 @@ static void termEnqueue(int read, int unit, int pid) {
         queueHd = &termWriteQueueHds[unit];
     }
 
-    struct pcb *proc = pcbTable[pid % MAXPROC];
+    struct pcb *proc = &pcbTable[pid % MAXPROC];
 
     // place proc as the head if the head is empty
     if (*queueHd == NULL) {
@@ -486,19 +489,12 @@ static void termEnqueue(int read, int unit, int pid) {
 *   unit : the unit (0-3) of the terminal whose queue to remove from.
 */
 static void termDequeue(int read, int unit) {
-    struct pcb **queueHd;
     if (read) {
-        queueHd = &termReadQueueHds[unit];
+        termReadQueueHds[unit] = termReadQueueHds[unit]->termReadQueueNexts[unit];
+        unblockProc(termReadQueueHds[unit]->pid);
     } else {
-        queueHd = &termWriteQueueHds[unit];
-    }
-
-    unblockProc(*queueHd->pid);
-
-    if (read) {
-        *queueHd = *queueHd->termReadQueueNexts[unit];
-    } else {
-        *queueHd = *queueHd->termWriteQueueNexts[unit];
+        termWriteQueueHds[unit] = termWriteQueueHds[unit]->termWriteQueueNexts[unit];
+        unblockProc(termWriteQueueHds[unit]->pid);
     }
 }
 
