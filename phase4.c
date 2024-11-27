@@ -59,6 +59,8 @@ static struct pcb pcbTable[MAXPROC]; // shadow table of PCBs
 int termWriteLocks[4]; // array of mbox IDs for the write locks for terminals 0-3
 int termReadLocks[4]; // array of mbox IDs for the read locks for terminals 0-3
 struct terminalControl termCtrls[4]; // array of terminal controls
+int sleepQueueLock; // mbox number of lock for modifying sleep queue
+int termQueueLocks[4]; // mbox numbers of locks for modifying terminal queues
 
 //
 // NON-STATIC FUNCTIONS
@@ -97,13 +99,18 @@ void phase4_init(void) {
     for (int i=0; i<4; i++) {
         termWriteLocks[i] = MboxCreate(1, 0);
         termReadLocks[i] = MboxCreate(1, 0);
+        termQueueLocks[i] = MboxCreate(1, 0);
         releaseLock(termWriteLocks[i]);
         releaseLock(termReadLocks[i]);
+        releaseLock(termQueueLocks[i]);
     }
+
+    sleepQueueLock = MboxCreate(1, 0);
+    releaseLock(sleepQueueLock);
 
     // initialize terminal controls structures
     for (int i=0; i<4; i++) {
-        termCtrls[i].nextFilledBuf = -1;
+        termCtrls[i].nextFilledBuf = 0;
         termCtrls[i].numFilledBufs = 0;
     }
 }
@@ -242,7 +249,7 @@ int clockDaemon(void *arg) {
 
     while (1) {
         waitDevice(USLOSS_CLOCK_DEV, 0, status);
-        if (sleepQueueHd != NULL && currentTime() >= sleepQueueHd->sleepEnd) {
+        while (sleepQueueHd != NULL && currentTime() >= sleepQueueHd->sleepEnd) {
             sleepDequeue();
         } 
     }
@@ -311,7 +318,7 @@ int terminalDaemon(void *arg) {
         }
 
         // if ready for reading
-        if (USLOSS_TERM_STAT_RECV(*status) == USLOSS_DEV_READY) {
+        if (USLOSS_TERM_STAT_RECV(*status) == USLOSS_DEV_BUSY) {
             struct pcb *readingProc = termReadQueueHds[unit];
             int bufIdx = termCtrls[unit].nextFilledBuf;
             
@@ -328,6 +335,9 @@ int terminalDaemon(void *arg) {
             
             // read character
             char nextChar = USLOSS_TERM_STAT_CHAR(*status);
+            if (unit == 1) {
+                USLOSS_Console("%c\n", USLOSS_TERM_STAT_CHAR(*status));
+            }
 
             // if the end of a line is reached
             if (nextChar == '\n' || writeIdx == MAXLINE) {
@@ -405,6 +415,7 @@ static void releaseLock(int mboxNum) {
 *   pid - PID of the process to place in the queue
 */
 static void sleepEnqueue(int pid) {
+    grabLock(sleepQueueLock);
     struct pcb *proc = &pcbTable[pid % MAXPROC];
     int endTime = proc->sleepEnd;
     // make proc the head if queue is empty
@@ -415,7 +426,7 @@ static void sleepEnqueue(int pid) {
         // find where proc belongs in the queue ordered by sleep end time
         struct pcb *next = sleepQueueHd;
         struct pcb *prev = NULL;
-        while (next != NULL && endTime > next->sleepEnd) {
+        while (next != NULL && endTime / 100000 > next->sleepEnd) {
             prev = next;
             next = next->sleepQueueNext;
         }
@@ -424,8 +435,10 @@ static void sleepEnqueue(int pid) {
         proc->sleepQueueNext = next;
         if (prev != NULL) {
             prev->sleepQueueNext = proc;
+            USLOSS_Console("Process %d's sleep end: %d\n", pid, proc->sleepEnd);
         }
     }
+    releaseLock(sleepQueueLock);
 }
 
 /*
@@ -433,8 +446,10 @@ static void sleepEnqueue(int pid) {
 *   sleep queue and unblocks it
 */
 static void sleepDequeue() { 
+    grabLock(sleepQueueLock);
     unblockProc(sleepQueueHd->pid);
     sleepQueueHd = sleepQueueHd->sleepQueueNext;
+    releaseLock(sleepQueueLock);
 }
 
 /*
@@ -445,6 +460,8 @@ static void sleepDequeue() {
 *   pid : PID of the process to be enqueued
 */
 static void termEnqueue(int read, int unit, int pid) {
+    grabLock(termQueueLocks[unit]);
+
     // get the desired queue head
     struct pcb **queueHd;
     if (read) {
@@ -480,6 +497,8 @@ static void termEnqueue(int read, int unit, int pid) {
             proc->termWriteQueueNexts[unit] = NULL;
         }
     }
+
+    releaseLock(termQueueLocks[unit]);
 }
 
 /*
@@ -489,13 +508,15 @@ static void termEnqueue(int read, int unit, int pid) {
 *   unit : the unit (0-3) of the terminal whose queue to remove from.
 */
 static void termDequeue(int read, int unit) {
+    grabLock(termQueueLocks[unit]);
     if (read) {
-        termReadQueueHds[unit] = termReadQueueHds[unit]->termReadQueueNexts[unit];
         unblockProc(termReadQueueHds[unit]->pid);
+        termReadQueueHds[unit] = termReadQueueHds[unit]->termReadQueueNexts[unit];
     } else {
-        termWriteQueueHds[unit] = termWriteQueueHds[unit]->termWriteQueueNexts[unit];
         unblockProc(termWriteQueueHds[unit]->pid);
+        termWriteQueueHds[unit] = termWriteQueueHds[unit]->termWriteQueueNexts[unit];
     }
+    releaseLock(termQueueLocks[unit]);
 }
 
 
