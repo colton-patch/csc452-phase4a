@@ -1,6 +1,7 @@
 /*
  * Authors: Colton Patch, Ping Tontrasathien
- * phase4.c - 
+ * phase4.c - Defines the system call handlers for sleeping, reading from a terminal,
+ *  and writing to a terminal.
  * 
  */
 
@@ -31,7 +32,8 @@ struct pcb {
 struct terminalControl {
     char readBuffers[10][MAXLINE + 1];
     int numFilledBufs;
-    int nextFilledBuf;
+    int nextBuf;
+    int firstFilledBuf;
 };
 
 //
@@ -110,8 +112,9 @@ void phase4_init(void) {
 
     // initialize terminal controls structures
     for (int i=0; i<4; i++) {
-        termCtrls[i].nextFilledBuf = 0;
+        termCtrls[i].nextBuf = 0;
         termCtrls[i].numFilledBufs = 0;
+        termCtrls[i].firstFilledBuf = -1;
     }
 
     for (int i=0; i<MAXPROC; i++) {
@@ -287,10 +290,10 @@ int terminalDaemon(void *arg) {
 
         // check if there is already a stored line that can be read by a process
         if (termReadQueueHds[unit] != NULL && termCtrls[unit].numFilledBufs > 0) {
-            int bufIdx = termCtrls[unit].nextFilledBuf;
+            int bufIdx = termCtrls[unit].firstFilledBuf;
             strcpy(termReadQueueHds[unit]->readBuf, termCtrls[unit].readBuffers[bufIdx]);
             termCtrls[unit].numFilledBufs--;
-            termCtrls[unit].nextFilledBuf--;
+            termCtrls[unit].firstFilledBuf = (termCtrls[unit].firstFilledBuf + 1) % 10;
 
             int i;
             for (i=0; i<MAXLINE; i++) {
@@ -338,7 +341,7 @@ int terminalDaemon(void *arg) {
         if (USLOSS_TERM_STAT_RECV(*status) == USLOSS_DEV_BUSY) { 
 
             struct pcb *readingProc = termReadQueueHds[unit];
-            int bufIdx = termCtrls[unit].nextFilledBuf;
+            int bufIdx = termCtrls[unit].nextBuf;
             
             // if just starting to read, grab a lock so that nothing else can read
             if (!reading) {
@@ -364,7 +367,7 @@ int terminalDaemon(void *arg) {
                     strcpy(readingProc->readBuf, termCtrls[unit].readBuffers[bufIdx]);
                     readingProc->readLen = readIdx;
                     termCtrls[unit].numFilledBufs--;
-                    termCtrls[unit].nextFilledBuf = (termCtrls[unit].nextFilledBuf + 1) % 10;
+                    termCtrls[unit].firstFilledBuf = (termCtrls[unit].firstFilledBuf + 1) % 10;
                     termDequeue(1, unit);
                 }
 
